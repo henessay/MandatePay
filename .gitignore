@@ -27,3 +27,6 @@ npm-debug.log*
 .DS_Store
 coverage/
 .vitest/
+
+# Next generated
+next-env.d.ts

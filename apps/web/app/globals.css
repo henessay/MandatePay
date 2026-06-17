@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background: radial-gradient(1200px 600px at 70% -10%, #15203a 0%, #0a0e1a 55%);
+  color: #e5e7eb;
+  min-height: 100vh;
+}
+
+.card {
+  @apply rounded-xl border border-edge bg-panel/80 backdrop-blur;
+}
+
+.chip {
+  @apply inline-flex items-center gap-1 rounded-full border border-edge px-2.5 py-0.5 text-xs font-medium;
+}
+
+.mono {
+  @apply font-mono text-[13px];
+}
