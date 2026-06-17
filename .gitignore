@@ -1,0 +1,29 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# secrets / env
+.env
+.env.local
+.env.*.local
+*.key
+!.env.example
+
+# builds / artifacts
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Foundry
+packages/contracts/out/
+packages/contracts/cache/
+packages/contracts/broadcast/
+
+# logs / os
+*.log
+npm-debug.log*
+.DS_Store
+coverage/
+.vitest/
