@@ -93,6 +93,22 @@ Environment: Linux container; Node v22.22.2; `@terminal3/t3n-sdk@3.7.0`; pnpm/Fo
   secp256k1 agent pubkey** (needed for `buildDelegationCredential.agent_pubkey`), pushing devs
   to noble directly and into this trap.
 - **Evidence:** `ERR_PACKAGE_PATH_NOT_EXPORTED: './secp256k1' is not defined by "exports"`.
-- **Workaround:** Used the correct v2 entry; for the probe, supplied a synthetic 33-byte pubkey.
-  **Ask:** export an `agent_keypair()` / `getAgentPublicKey(secret)` helper so app devs don't
-  hand-roll the agent key with the right curve/encoding.
+- **Workaround:** Used the correct v2 entry (`@noble/curves/secp256k1.js`, with the `.js`
+  suffix — confirmed against the installed package's `exports`); for the probe, supplied a
+  synthetic 33-byte pubkey. **Ask:** export an `agent_keypair()` / `getAgentPublicKey(secret)`
+  helper so app devs don't hand-roll the agent key with the right curve/encoding.
+
+### #8 — 2026-06-17 · onboarding-friction · no boolean credential-verify helper; recovery THROWS on a bad signature
+- **Expected:** A helper like `verifyCredentialSignature(jcs, sig, expectedAddr) -> boolean`
+  to mirror the TEE's server-side check, returning false for an invalid/tampered signature.
+- **Actual:** The only primitive is `ethRecoverEip191(msg, sig)`, which **throws** (`"bad point:
+  is not on curve, sqrt error: Cannot find square root"`) when the signature's `r` is not a
+  valid curve point — i.e. a tampered/garbage signature raises instead of recovering a
+  non-matching address. A naive `recovered === expected` verifier therefore throws on exactly
+  the inputs it's meant to reject, and the failure is nondeterministic (depends on whether the
+  corrupted bytes happen to land on the curve).
+- **Evidence:** Flaky unit test; `ethRecoverEip191` on a 1-char-mutated 65-byte sig throws
+  ~intermittently with the curve error.
+- **Workaround:** Wrapped recovery in try/catch in our `verifyMandate`, returning `false` on
+  throw. **Ask:** ship a boolean verify helper (catching curve errors), or document that
+  callers MUST guard `ethRecoverEip191`.
