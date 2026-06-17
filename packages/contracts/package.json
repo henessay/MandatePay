@@ -1,0 +1,11 @@
+{
+  "name": "@mandatepay/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "MandatePolicy.sol — on-chain defense-in-depth mirror (Foundry). Non-load-bearing.",
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test -vv",
+    "typecheck": "forge build"
+  }
+}
