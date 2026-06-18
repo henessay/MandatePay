@@ -18,7 +18,7 @@ concrete suggested fix.
 
 | # | Category | Sev | One-line |
 |---|---|---|---|
-| 1 | onboarding-friction | high | Hosted docs unreachable (egress-block + HTTP 403 bot wall) |
+| 1 | onboarding-friction | high | Hosted docs unreachable (HTTP 403 bot wall) — **partly resolved live**: `llms.txt`/`llms-full.txt` now served 200 |
 | 2 | doc-gap | high | README documents <40% of the API; delegation/payroll/audit absent |
 | 3 | doc-gap | medium | Docs' "coming soon" labels contradict what 3.7.0 ships |
 | 4 | doc-gap | high | `http-with-placeholders` has no client symbol or ref-provisioning docs |
@@ -47,8 +47,9 @@ concrete suggested fix.
 | 27 | bug | high | **Live**: payroll/org-data/delegation execute under a `/contracts`-suffixed name; `getScriptVersion` 404s on the logical `tee:payroll` |
 | 28 | doc-gap | medium | **Live**: deployed `tee:payroll/contracts` is **v5.2.0**, contradicting `PAYROLL_FUNCTIONS_V1` "v1/v2" labeling (compounds #12) |
 | 29 | bug | high | **Live**: `buildPayroll*Invocation` returns `bigint` fields `executeAndDecode` can't serialize; no wire-projection helper |
-| 30 | doc-gap | high | **Live**: payroll authz chain (organisation→policy→grant→roster) undocumented; no client method to create an organisation |
+| 30 | doc-gap | high | **Live · HEADLINE**: built-in `tee:payroll` authz needs an organisation with NO creation path — SDK, dashboard, docs, agent-auth, and the org contract all dead-end |
 | 31 | bug | medium | **Live**: organisation contract returns opaque HTTP 500 on unknown/missing function name (vs payroll's clean typed 400s) |
+| 32 | doc-gap | high | **Live · HEADLINE**: docs teach "write your own `z:<tid>` contract + agent-auth-update", contradicting the SDK's built-in `tee:payroll`; flagship Payroll Agent doc page is an empty stub |
 
 ---
 
@@ -64,6 +65,10 @@ concrete suggested fix.
   forcing reverse-engineering from `index.d.ts`.
 - **Suggested fix:** Publish a static/printable docs mirror or an `llms.txt`; allow plain GETs
   through the bot wall; ship the get-started as Markdown in the repo.
+- **Live-update (2026-06-18, egress open):** the bot wall no longer blocks plain GETs from this
+  headless env — `https://docs.terminal3.io/llms.txt` and `/llms-full.txt` return **200** (117 KB of
+  full Markdown), and pages render via WebFetch. Partial resolution: docs are now machine-readable
+  (good!), but `/api-reference/openapi.json` 404s and key pages are empty stubs (see #32).
 
 ### #2 — README documents under 40% of the real API surface
 - **Category:** doc-gap · **Severity:** high
@@ -503,6 +508,19 @@ finding below carries a real `request_id` from the node.
   excellent — typed `{code, detail, request_id}` — credit where due.)
 - **Suggested fix:** document the org-bootstrap sequence end-to-end and expose a client method (or a
   worked example) to create an organisation and obtain its DID; clarify the demo/onboarding path.
+- **Docs + agent-auth follow-up (2026-06-18, docs now readable):** read the live docs end-to-end
+  (`llms-full.txt`). The documented developer model is **tenant-based, not org-based**: claim a
+  `did:t3n` → write your OWN TEE contract in the `z:<tid>:` namespace → authorize via
+  `tee:user/contracts` **`agent-auth-update`** → invoke. **There is no "organisation" concept in the
+  developer docs and no payroll provisioning walkthrough** (the flagship "Payroll Agent" page is an
+  empty stub — see #32). Tested the documented `agent-auth-update` self-grant on `tee:payroll` live:
+  it **commits** (HTTP 200, `tx_hash: tx:302:44993` / `tx:302:44995`) but does **NOT** clear
+  `compute-payroll`'s `NoGrant` — so agent-auth (egress grant for `z:` contracts) is a *different
+  layer* from `tee:payroll`'s `OrgContractGrant`. `GET /api-reference/openapi.json` → 404; no
+  admin/org endpoint anywhere. **Net: provisioning the organisation the built-in `tee:payroll`
+  requires is unavailable via SDK, sandbox dashboard, docs, agent-auth, or the org contract (500,
+  #31). The `execute-disbursement` wire shape (R1 core) CANNOT be captured — escalate to devrel; do
+  not guess.**
 
 ### #31 — Organisation contract returns opaque HTTP 500 on an unknown/missing function name
 - **Category:** bug · **Severity:** medium
@@ -514,6 +532,27 @@ finding below carries a real `request_id` from the node.
 - **Actual:** the organisation contract panics into a 500 on bad input, defeating error-driven
   discovery and masking whether the fault is the function name or the input.
 - **Suggested fix:** validate `function_name`/input and return a typed 400; never 500 on bad input.
+
+### #32 — Docs teach a "write-your-own `z:<tid>` contract" model that contradicts the SDK's built-in `tee:payroll`; the Payroll Agent page is empty
+- **Category:** doc-gap · **Severity:** high (headline)
+- **Concerns:** `developers/adk/use-cases/payroll-agent` (empty stub); the get-started walkthrough
+  (write→build→register→invoke a `z:<tid>:` contract, authorized by `tee:user/contracts`
+  `agent-auth-update`); the SDK's first-class `tee:payroll`, `PAYROLL_FUNCTIONS_V1`,
+  `buildPayrollInvocation`.
+- **Repro:** Fetch `https://docs.terminal3.io/developers/adk/use-cases/payroll-agent` → the whole
+  page body is `See [Delegate Access to AI Agents#payroll]` (no content). Follow the docs' actual
+  walkthrough → it builds a **travel** (Duffel) contract under `z:<tid>:travel-contracts`, authorized
+  via `agent-auth-update`, and never mentions `tee:payroll`. Meanwhile the SDK exports `tee:payroll` /
+  `PAYROLL_FUNCTIONS_V1` / `buildPayrollInvocation` as first-class, implying you invoke the built-in
+  payroll contract.
+- **Expected:** one coherent story — either the built-in `tee:payroll` is the supported path (then
+  document its organisation/grant provisioning), or developers write their own payroll contract (then
+  the SDK's built-in payroll symbols + the "payroll agent" framing are misleading).
+- **Actual:** the two contradict. A developer following the **SDK** hits the un-provisionable
+  `tee:payroll` wall (#30); a developer following the **docs** writes their own `z:<tid>` contract and
+  never touches `tee:payroll`. The flagship payroll use-case has zero documentation.
+- **Suggested fix:** publish a real payroll-agent walkthrough; pick and document one authorization
+  model; if `tee:payroll` is internal, mark the SDK symbols accordingly.
 
 ---
 
