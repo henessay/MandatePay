@@ -44,6 +44,11 @@ concrete suggested fix.
 | 24 | doc-gap | low | SG/CPF-specific enums ship in the "generic" SDK undocumented |
 | 25 | type-issue | low | `HandshakeResult.authenticated`/`.did` misleading pre-authentication |
 | 26 | doc-gap | medium | `loadWasmComponent` WASM resolution under bundlers undocumented/ambiguous |
+| 27 | bug | high | **Live**: payroll/org-data/delegation execute under a `/contracts`-suffixed name; `getScriptVersion` 404s on the logical `tee:payroll` |
+| 28 | doc-gap | medium | **Live**: deployed `tee:payroll/contracts` is **v5.2.0**, contradicting `PAYROLL_FUNCTIONS_V1` "v1/v2" labeling (compounds #12) |
+| 29 | bug | high | **Live**: `buildPayroll*Invocation` returns `bigint` fields `executeAndDecode` can't serialize; no wire-projection helper |
+| 30 | doc-gap | high | **Live**: payroll authz chain (organisation→policy→grant→roster) undocumented; no client method to create an organisation |
+| 31 | bug | medium | **Live**: organisation contract returns opaque HTTP 500 on unknown/missing function name (vs payroll's clean typed 400s) |
 
 ---
 
@@ -420,6 +425,95 @@ concrete suggested fix.
   bundler touching the WASM.
 - **Suggested fix:** Document `wasmPath` semantics + a per-bundler note (Next `serverExternalPackages`,
   Vite `assetsInclude`, etc.); state the default resolution behavior.
+
+---
+
+## Live-node session — 2026-06-18 (testnet `cn-api.sg.testnet.t3n.terminal3.io`, R1 hunt)
+
+Authenticated via Eth/SIWE (DID `did:t3n:<40-hex>` confirmed, one demo identity, 20000 credit
+base-units). Drove the `tee:payroll` flow until it blocked on organisation provisioning. Every
+finding below carries a real `request_id` from the node.
+
+### #27 — Payroll/org-data/delegation execute under a `/contracts`-suffixed script name; the logical `tee:payroll` 404s in `getScriptVersion`
+- **Category:** bug · **Severity:** high
+- **Concerns:** executable `script_name` vs the logical contract name used everywhere in the SDK
+  (`DelegationCredential.contract = "tee:payroll"`, `T3PayrollRail`, docs); `getScriptVersion`
+  (`index.d.ts L2880`).
+- **Repro:** `getScriptVersion(baseUrl, "tee:payroll")` →
+  `GET /api/contracts/current?name=tee:payroll` → **404** `{"error":"No registered version for
+  script: tee:payroll","code":"not_found"}`. But `name=tee:payroll/contracts` → **200**
+  `{"current_version":"5.2.0"}`. Same pattern: `tee:org-data/contracts` (1.1.1),
+  `tee:delegation/contracts` (2.0.1) resolve; the bare names 404.
+- **Expected:** the name you sign into a delegation credential (`contract: "tee:payroll"`) and the
+  name you execute against are the same, or the difference is documented.
+- **Actual:** execution requires the `/contracts` suffix (`script_name: "tee:payroll/contracts"`,
+  `script_version: "5.2.0"`), but the grant is keyed by the **logical** name — the contract's own
+  refusal says `NoGrant: no grant exists for this user on tee:payroll` (no suffix). The two
+  namespaces are silently different and undocumented; `getScriptVersion`, the SDK's own `"latest"`
+  resolver, 404s on the logical name, so a naive `script_version: "latest"` cannot be resolved.
+- **Suggested fix:** document the `/contracts` execution suffix and the logical-vs-executable name
+  split; make `getScriptVersion`/execute accept the logical name; ship a `tee:payroll` constant.
+
+### #28 — Deployed `tee:payroll/contracts` is v5.2.0, contradicting the SDK's "v1/v2" payroll labeling
+- **Category:** doc-gap · **Severity:** medium
+- **Concerns:** `PAYROLL_FUNCTIONS_V1` (named `_V1`, TSDoc says "v2 surface", `index.d.ts L2195`)
+  vs the live registry.
+- **Repro:** `GET /api/contracts/current?name=tee:payroll/contracts` → `current_version: "5.2.0"`.
+- **Expected:** the constant name, its doc, and the deployed contract agree on a version.
+- **Actual:** three different stories — constant `_V1`, doc "v2", deployment `5.2.0`. A developer
+  cannot tell which contract version the five function names target. Compounds #12.
+- **Suggested fix:** align the constant/doc with the deployed semver, or state the supported range.
+
+### #29 — `buildPayroll*Invocation` returns `bigint` fields that `executeAndDecode` cannot serialize; no wire projection
+- **Category:** bug · **Severity:** high
+- **Concerns:** `buildPayrollDirectInvocation`/`buildPayrollInvocation` (`index.d.ts L2516/L2534`),
+  `PayrollRunRequest.batch_cap_cents`/`individual_disbursement_threshold_cents` (`bigint`),
+  `executeAndDecode` (`L1678`).
+- **Repro:** `const inv = buildPayrollDirectInvocation({ request: { …, batch_cap_cents: 1000000n }})`
+  then `client.executeAndDecode({ script_name, script_version, function_name, input: inv })` →
+  **`TypeError: Do not know how to serialize a BigInt`** (thrown client-side in the JSON encode).
+  The builder also auto-fills `individual_disbursement_threshold_cents: 1500000n` (another bigint).
+  Workaround: hand-project every bigint to a decimal string before sending; then the node accepts
+  the body (the request shape `{ request: { org_id, cycle_id, pay_period_start/end,
+  batch_cap_cents: "…", historical_baselines } }` is correct — it reached the authz layer).
+- **Expected:** the builder's output is directly sendable via `execute`/`executeAndDecode`, or a
+  projection helper exists.
+- **Actual:** the SDK's own builder produces an object its own executor cannot serialize, with no
+  exported `toPayrollWireBody()` to bridge them (parallels #15 for `signCustodial`).
+- **Suggested fix:** serialize bigints per the wire convention inside `execute`, or export a
+  documented wire-projection helper and show it in a payroll example.
+
+### #30 — The payroll authorization prerequisite chain is undocumented, and creating an organisation has no client SDK method
+- **Category:** doc-gap · **Severity:** high
+- **Concerns:** `OrgContractGrants`/`UserGrant`, `OrgDataClient.createPolicy` ("only for orgs that
+  pre-date the contract … new orgs are seeded automatically by the organisation contract",
+  `index.d.ts L2668`); no client surface for the organisation contract.
+- **Repro (full chain, each a real `request_id`):**
+  1. `compute-payroll` (no grant) → 400 `NoGrant: no grant exists for this user on tee:payroll`.
+  2. `setGrants`/`grantsGet`/`policyGet` (org = own DID) → 400 `OrgPolicyNotInitialised: org policy
+     is not initialised for this organisation`.
+  3. `createPolicy(orgDid = own DID, initialAdminDid = own DID)` → 400 `OrganisationNotFound:
+     organisation does not exist`.
+- **Expected:** a documented, SDK-supported path to: create/obtain an organisation → seed its
+  org-data policy → set a grant → write the roster → run payroll.
+- **Actual:** the whole flow hinges on an **organisation** existing, but the client SDK exposes no
+  method to create one (only hints: `submitUserInput.organisationDid?`, `TenantClient.executeControl`,
+  and a registered-but-undocumented `tee:organisation/contracts@0.1.19`). A developer with a key +
+  the SDK cannot stand up the payroll prerequisites end-to-end. (The error envelopes themselves are
+  excellent — typed `{code, detail, request_id}` — credit where due.)
+- **Suggested fix:** document the org-bootstrap sequence end-to-end and expose a client method (or a
+  worked example) to create an organisation and obtain its DID; clarify the demo/onboarding path.
+
+### #31 — Organisation contract returns opaque HTTP 500 on an unknown/missing function name
+- **Category:** bug · **Severity:** medium
+- **Concerns:** `tee:organisation/contracts@0.1.19` via `executeAndDecode`.
+- **Repro:** `function_name: "__nope__"` (and `"create"`, `"create-organisation"`, `"create-org"`)
+  with `input: {}` → **HTTP 500** `{"code":"internal_error","request_id":"…"}` — no `detail`, no
+  function list, just a request id. (By contrast `tee:payroll/contracts` returns clean typed 400s.)
+- **Expected:** a typed 400 (`unknown function` / `missing field …`) like the payroll contract.
+- **Actual:** the organisation contract panics into a 500 on bad input, defeating error-driven
+  discovery and masking whether the fault is the function name or the input.
+- **Suggested fix:** validate `function_name`/input and return a typed 400; never 500 on bad input.
 
 ---
 
