@@ -167,6 +167,13 @@ concrete suggested fix.
   README provides only `EthSign`, so the documented minimal example cannot complete a handshake.
 - **Suggested fix:** Show `handlers: { ...createDefaultHandlers(baseUrl), EthSign: metamask_sign(...) }`
   in every example, and state that `MlKemPublicKey` + `Random` are mandatory.
+- **Live-check (2026-06-18):** ⏳ **BLOCKED — pending node egress.** Ran the README Quick Start
+  verbatim against `NODE_URLS.testnet` (`loadWasmComponent` works in Node). It fails earlier than
+  predicted — at `GET https://cn-api.sg.testnet.t3n.terminal3.io/status: 403` — because the SDK
+  fetches the ML-KEM key itself before any handler dispatch, and the node host is not in this
+  environment's egress allowlist. So we **cannot yet confirm** whether a missing `MlKemPublicKey`
+  handler is actually fatal: handshake may not need a hand-supplied handler at all. **Do not cite
+  #9 as confirmed until `/status` is reachable.** Re-run once egress is open.
 
 ### #10 — README Ethereum-auth example omits `baseUrl` → broken transport & un-buildable MlKem handler
 - **Category:** bug · **Severity:** high
@@ -180,6 +187,13 @@ concrete suggested fix.
   broken — and inconsistent with the Quick Start, which *does* pass `baseUrl`.
 - **Suggested fix:** Always pass `baseUrl` (or a `transport`) in examples; make `baseUrl`
   required at the type level when no `transport` is supplied.
+- **Live-check (2026-06-18):** ⚠️ **Partially observed — reclassify emphasis.** With no `baseUrl`,
+  the client did NOT use testnet — it silently targeted the **production** node: the failure was
+  `GET https://cn-api.sg.prod.t3n.terminal3.io/status: 403`. So omitting `baseUrl` doesn't merely
+  break the transport — **it defaults to PRODUCTION** (the SDK's default environment), a far more
+  dangerous footgun (a dev experimenting locally hits prod). The final break-mode (transport vs
+  ML-KEM handler) is still pending egress, but the prod-default behavior is confirmed live and is
+  the real headline here. Strengthens #20.
 
 ### #11 — Logger TSDoc example imports a non-existent `@t3n-sdk/logger` subpath
 - **Category:** doc-gap · **Severity:** medium
@@ -313,6 +327,10 @@ concrete suggested fix.
   requests can race. (Mitigation: always pass an explicit `baseUrl` per `T3nClient`, which we do.)
 - **Suggested fix:** Document the globals as process-wide and recommend per-client `baseUrl`;
   consider a config object scoped to each client.
+- **Live-check (2026-06-18):** Confirmed live that the SDK's **default environment is
+  `production`** — a `T3nClient` built with neither `baseUrl` nor a prior `setEnvironment("testnet")`
+  fetched `cn-api.sg.prod.t3n.terminal3.io/status` (see #10). A safe-by-default SDK should default
+  to testnet (or refuse with no explicit selection), not silently to mainnet.
 
 ### #21 — No one-call node attestation verify; `attestationMsg` construction undocumented
 - **Category:** missing-example · **Severity:** medium
