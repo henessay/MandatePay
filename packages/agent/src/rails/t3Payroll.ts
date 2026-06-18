@@ -16,40 +16,71 @@ export interface PayrollExecuteClient {
 
 export interface T3PayrollRailOpts {
   client: PayrollExecuteClient;
-  /** Resolved `tee:payroll` script version, or "latest". */
+  /**
+   * CONCRETE resolved semver of `tee:payroll/contracts` (live value at audit
+   * time: "5.2.0"). MUST NOT be "latest": confirmed live (FEEDBACK #27) that the
+   * contract registry only resolves the `/contracts`-suffixed name and `execute`
+   * cannot parse a literal "latest". Resolve caller-side with
+   * `getScriptVersion(baseUrl, "tee:payroll/contracts")` and pass the result.
+   */
   scriptVersion?: string;
 }
 
 /**
- * LIVE rail — calls `execute-disbursement` on `tee:payroll`. The placeholder
- * substitution (`bank_account_ref → real account`) happens SERVER-SIDE inside
- * the TEE; we only ever send the opaque ref and receive masked/reference data.
+ * Executable script name. CONFIRMED live (FEEDBACK #27): the *logical* contract
+ * name `tee:payroll` — the one written into the delegation credential and into
+ * org-data grants — is NOT the executable script name. Execution dispatches
+ * against `tee:payroll/contracts`; `getScriptVersion("tee:payroll")` 404s.
+ */
+const PAYROLL_SCRIPT_NAME = "tee:payroll/contracts";
+
+/**
+ * LIVE rail — dispatches `execute-disbursement` on `tee:payroll/contracts`. The
+ * placeholder substitution (`bank_account_ref → real account`) happens
+ * SERVER-SIDE inside the TEE; we only ever send the opaque ref and receive
+ * masked/reference data.
  *
- * ⚠️ TODO(live-node, R1): the exact `function_name`, the `input` shape, and the
- * decoded response are NOT confirmed offline (the SDK ships no fixture for them —
- * see docs/PHASE1_PLAN.md §3 and FEEDBACK_T3.md #4). Everything below the
- * "WIRE FORMAT — UNCONFIRMED" line is a thin best-effort mapping to be verified
- * against a live node and corrected in one place. Until then this rail throws a
- * clear, actionable error rather than guessing silently.
+ * R1 status (verified against testnet 2026-06-18):
+ *   ✅ script_name = `tee:payroll/contracts`, NOT `tee:payroll`            (#27)
+ *   ✅ script_version must be a concrete semver (live 5.2.0); "latest" 404s (#27)
+ *   ✅ amounts cross the wire as DECIMAL STRINGS — `executeAndDecode` cannot
+ *      JSON-serialize the SDK's `bigint` request fields                    (#29)
+ *   ✅ the contract is RUN-oriented (compute-payroll takes a whole-run
+ *      `PayrollRunRequest`); authorization needs an org-data grant on the
+ *      logical `tee:payroll`, which needs an organisation + seeded policy +
+ *      roster — none creatable from the client SDK                         (#30)
+ *   ⛔️ STILL UNCONFIRMED (blocked on organisation provisioning, PHASE1_PLAN §3):
+ *      the exact `execute-disbursement` input (per-line vs run-scoped) and its
+ *      decoded RESPONSE shape. The mapping below is a best-effort PLACEHOLDER;
+ *      until a live response is captured the rail THROWS rather than guess.
  */
 export class T3PayrollRail implements DisbursementRail {
   readonly kind = "t3-payroll" as const;
 
-  constructor(private readonly opts: T3PayrollRailOpts) {}
+  constructor(private readonly opts: T3PayrollRailOpts) {
+    if (!opts.scriptVersion || opts.scriptVersion === "latest") {
+      throw new Error(
+        `T3PayrollRail: scriptVersion must be a concrete semver (e.g. "5.2.0"), got ` +
+          `"${opts.scriptVersion ?? "undefined"}". A literal "latest" does not resolve for the ` +
+          `built-in tee: contracts (FEEDBACK #27) — resolve it via ` +
+          `getScriptVersion(baseUrl, "${PAYROLL_SCRIPT_NAME}") and pass the result.`,
+      );
+    }
+  }
 
   async dispatch(instruction: DisbursementInstruction): Promise<DispatchReceipt> {
     const now = Date.now();
 
     // ---- request the agent sends (zero-PII: opaque ref + placeholder only) ----
     const payload = {
-      script_name: "tee:payroll",
-      script_version: this.opts.scriptVersion ?? "latest",
-      function_name: "execute-disbursement", // TODO(R1): confirm against live tee:payroll
+      script_name: PAYROLL_SCRIPT_NAME, // confirmed (#27)
+      script_version: this.opts.scriptVersion, // concrete semver, confirmed required (#27)
+      function_name: "execute-disbursement", // UNCONFIRMED input shape — see class doc
       input: {
         cycle_id: instruction.cycleId,
         employee_id: instruction.employeeId,
         recipient_ref: instruction.recipientRef, // resolved INSIDE the TEE, never here
-        amount_cents: instruction.amountCents,
+        amount_cents: String(instruction.amountCents), // decimal string on the wire (#29)
         currency: instruction.currency,
         mandate_vc_id: instruction.mandateVcId,
         nonce: instruction.nonce,
@@ -58,10 +89,10 @@ export class T3PayrollRail implements DisbursementRail {
 
     const raw = await this.opts.client.executeAndDecode<Record<string, unknown>>(payload);
 
-    // ===================== WIRE FORMAT — UNCONFIRMED ==========================
-    // TODO(R1): replace this block once we have a real response from the node.
-    // Map the contract's decoded response into our DispatchReceipt. Field names
-    // below are PLACEHOLDERS based on the SDK's general conventions, not verified.
+    // ===================== WIRE FORMAT — RESPONSE UNCONFIRMED =================
+    // TODO(R1): replace once a live execute-disbursement response is captured.
+    // Field names below are PLACEHOLDERS based on the SDK's general conventions;
+    // the contract is run-oriented so the real response may be batch-shaped.
     const status = (raw["status"] as string | undefined) ?? undefined;
     const txHash =
       (raw["tx_hash"] as string | undefined) ?? (raw["txHash"] as string | undefined) ?? null;
@@ -71,9 +102,10 @@ export class T3PayrollRail implements DisbursementRail {
 
     if (status === undefined || masked === undefined) {
       throw new Error(
-        "T3PayrollRail: unconfirmed tee:payroll response shape (R1). Got keys: " +
+        "T3PayrollRail: execute-disbursement response shape is UNCONFIRMED (R1, blocked on " +
+          "organisation provisioning — FEEDBACK #30). Got keys: [" +
           Object.keys(raw).join(", ") +
-          ". Confirm the wire format against a live node and update this mapping.",
+          "]. Capture a live response and finalize this mapping in one place.",
       );
     }
 
