@@ -15,10 +15,11 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.105.0",
     "@mandatepay/shared": "workspace:*",
-    "@terminal3/t3n-sdk": "^3.7.0",
     "@noble/curves": "^2.2.0",
-    "@noble/hashes": "^2.2.0"
+    "@noble/hashes": "^2.2.0",
+    "@terminal3/t3n-sdk": "^3.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

@@ -121,70 +121,109 @@ export class MockLlmClient implements LlmClient {
   }
 }
 
+/** Default judgment-layer model. Sonnet 4.6 — strong instruction-following at low latency. */
+export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6";
+
 /**
- * Real interpreter backed by the Anthropic Messages API (used when a key is set).
- * Uses plain fetch — no extra dependency. Forces strict JSON output and validates
- * the shape before returning. The model is given ONLY interpretation authority.
+ * Real interpreter backed by the Anthropic Messages API via the official SDK
+ * (`@anthropic-ai/sdk`). It extracts structured deltas through a FORCED tool call
+ * (`tool_choice: {type:"tool"}`), so the model must return its interpretation as the
+ * tool's typed input — a structured object, not free-form text we have to scrape.
+ *
+ * The model is given ONLY interpretation authority: it never sees or emits a bank
+ * account number, and it NEVER authorizes a payout — the deterministic layer
+ * (`computeProposal` + signed mandate) does. The SDK is imported lazily so the
+ * offline/mock path stays zero-dependency and zero-network.
  */
 export class AnthropicLlmClient implements LlmClient {
   readonly kind = "anthropic" as const;
 
   constructor(
     private readonly apiKey: string,
-    private readonly model = "claude-opus-4-8",
-    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly model: string = DEFAULT_ANTHROPIC_MODEL,
   ) {}
 
   async interpretHrUpdate(input: InterpretInput): Promise<InterpretOutput> {
-    const system =
-      "You are the interpretation layer of a payroll agent. Convert a free-form HR update " +
-      "into structured payout deltas. You DO NOT authorize payments and DO NOT see or output " +
-      "any bank account numbers. Output STRICT JSON only, matching the given schema. " +
-      "Allowed delta kinds: terminate, rate-change, bonus, base-change, no-op, unknown.";
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic({ apiKey: this.apiKey });
 
-    const schema =
-      '{"deltas":[{"employeeId":string,"displayName":string,"kind":string,' +
-      '"description":string,"newRate"?:number,"bonusPct"?:number,"newBaseCents"?:number,' +
-      '"effectiveFrom"?:string}],"summary":string}';
+    const system =
+      "You are the INTERPRETATION layer of a payroll agent. Convert a free-form HR " +
+      "update into structured payout deltas — one per employee actually affected. Rules: " +
+      "(1) You do NOT authorize payments; a deterministic layer does. " +
+      "(2) You never see or emit bank account numbers or PII beyond names/teams. " +
+      "(3) Map each change to exactly one kind: terminate, rate-change, bonus, base-change, " +
+      "no-op, unknown. Use 'unknown' when a clause is ambiguous — never guess an amount. " +
+      "(4) A team-wide instruction expands to one delta per matching employee. " +
+      "(5) Match employees by name against the roster and always echo their employeeId. " +
+      "Record your answer by calling the `record_interpretation` tool exactly once.";
+
+    const tool = {
+      name: "record_interpretation",
+      description:
+        "Record the structured payout deltas interpreted from the HR update, plus a one-paragraph human-readable summary.",
+      input_schema: {
+        type: "object" as const,
+        additionalProperties: false,
+        properties: {
+          deltas: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                employeeId: { type: "string", description: "roster employeeId this delta applies to" },
+                displayName: { type: "string" },
+                kind: {
+                  type: "string",
+                  enum: ["terminate", "rate-change", "bonus", "base-change", "no-op", "unknown"],
+                },
+                description: { type: "string", description: "plain-language description of the change" },
+                newRate: { type: "number", description: "rate multiplier (rate-change only)" },
+                bonusPct: { type: "number", description: "bonus percent of base (bonus only)" },
+                newBaseCents: { type: "integer", description: "new base salary in cents (base-change only)" },
+                effectiveFrom: { type: "string", description: "effective date as free text, if stated" },
+              },
+              required: ["employeeId", "displayName", "kind", "description"],
+            },
+          },
+          summary: { type: "string", description: "one-paragraph summary of what was understood" },
+        },
+        required: ["deltas", "summary"],
+      },
+    };
 
     const user =
-      `Roster: ${JSON.stringify(input.roster)}\n\n` +
-      `HR update: """${input.rawText}"""\n\n` +
-      `Return ONLY JSON matching: ${schema}`;
+      `Roster (employeeId, displayName, team):\n${JSON.stringify(input.roster)}\n\n` +
+      `HR update:\n"""${input.rawText}"""`;
 
-    const res = await this.fetchImpl("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": this.apiKey,
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: this.model,
-        max_tokens: 1024,
-        system,
-        messages: [{ role: "user", content: user }],
-      }),
+    const res = await client.messages.create({
+      model: this.model,
+      max_tokens: 4096,
+      system,
+      tools: [tool],
+      tool_choice: { type: "tool", name: "record_interpretation" },
+      messages: [{ role: "user", content: user }],
     });
 
-    if (!res.ok) {
-      throw new Error(`Anthropic API error ${res.status}: ${await res.text()}`);
+    const toolUse = res.content.find((b) => b.type === "tool_use");
+    if (!toolUse || toolUse.type !== "tool_use") {
+      throw new Error(
+        "Anthropic interpreter: model did not return a record_interpretation tool call",
+      );
     }
-    const data = (await res.json()) as { content?: { type: string; text?: string }[] };
-    const text = data.content?.find((c) => c.type === "text")?.text ?? "";
-    const json = text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
-    const parsed = JSON.parse(json) as InterpretOutput;
-    if (!Array.isArray(parsed.deltas)) {
-      throw new Error("Anthropic response missing deltas[]");
+    const out = toolUse.input as InterpretOutput;
+    if (!Array.isArray(out.deltas)) {
+      throw new Error("Anthropic interpreter: tool input missing deltas[]");
     }
-    return parsed;
+    return { deltas: out.deltas, summary: out.summary ?? "" };
   }
 }
 
 /** Pick the interpreter from env: real when a key is present, mock otherwise. */
 export function createLlmClient(apiKey?: string, model?: string): LlmClient {
   if (apiKey && apiKey.trim().length > 0) {
-    return new AnthropicLlmClient(apiKey, model);
+    return new AnthropicLlmClient(apiKey, model && model.trim() ? model : DEFAULT_ANTHROPIC_MODEL);
   }
   return new MockLlmClient();
 }
