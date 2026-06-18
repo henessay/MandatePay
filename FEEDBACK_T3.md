@@ -26,8 +26,8 @@ concrete suggested fix.
 | 6 | missing-example | high | No runnable example / `demo.ts` in the package; referenced files 404 |
 | 7 | onboarding-friction | medium | `@noble/curves@2` import-path trap; no agent-keypair helper |
 | 8 | onboarding-friction | medium | No boolean credential-verify; `ethRecoverEip191` throws on bad sig |
-| 9 | bug | high | README handshake examples omit the MlKem/Random handlers it requires |
-| 10 | bug | high | README Ethereum-auth example omits `baseUrl` → broken transport |
+| 9 | doc-gap | low | **Refuted live** (was bug/high) — handshake completes with zero handlers; `createDefaultHandlers` doc over-claims "required" |
+| 10 | bug | high | **Confirmed live** — omitting `baseUrl` silently targets **production** (not "broken transport") |
 | 11 | doc-gap | medium | Logger TSDoc imports a non-existent `@t3n-sdk/logger` subpath |
 | 12 | type-issue | medium | `PAYROLL_FUNCTIONS_V1` is documented as the "payroll v2" surface |
 | 13 | doc-gap | medium | `ClientExecute` TSDoc is copy-pasted from `ClientAuth` (wrong) |
@@ -153,8 +153,8 @@ concrete suggested fix.
 - **Suggested fix:** Ship a boolean verify helper that catches curve errors; or document that
   callers MUST wrap `ethRecoverEip191` in try/catch.
 
-### #9 — README handshake examples omit the MlKem/Random handlers `createDefaultHandlers` says it requires
-- **Category:** bug · **Severity:** high
+### #9 — ~~README handshake examples omit the MlKem/Random handlers it requires~~ → REFUTED LIVE
+- **Category:** doc-gap (reclassified from `bug` after live test) · **Severity:** low (was high)
 - **Concerns:** `README L39-41` (Quick Start) and `L67-69` (Ethereum Authentication);
   `createDefaultHandlers(baseUrl)` (`index.d.ts L2154-2160`, "Create the default handler set
   **required by the T3n handshake**"); `GuestToHostHandlers` (`index.d.ts L1078-1098`:
@@ -167,13 +167,21 @@ concrete suggested fix.
   README provides only `EthSign`, so the documented minimal example cannot complete a handshake.
 - **Suggested fix:** Show `handlers: { ...createDefaultHandlers(baseUrl), EthSign: metamask_sign(...) }`
   in every example, and state that `MlKemPublicKey` + `Random` are mandatory.
-- **Live-check (2026-06-18):** ⏳ **BLOCKED — pending node egress.** Ran the README Quick Start
-  verbatim against `NODE_URLS.testnet` (`loadWasmComponent` works in Node). It fails earlier than
-  predicted — at `GET https://cn-api.sg.testnet.t3n.terminal3.io/status: 403` — because the SDK
-  fetches the ML-KEM key itself before any handler dispatch, and the node host is not in this
-  environment's egress allowlist. So we **cannot yet confirm** whether a missing `MlKemPublicKey`
-  handler is actually fatal: handshake may not need a hand-supplied handler at all. **Do not cite
-  #9 as confirmed until `/status` is reachable.** Re-run once egress is open.
+- **Live-check (2026-06-18, egress now open): ❌ REFUTED — does NOT reproduce.** Ran the README
+  Quick Start handler set (`EthSign` only) against `NODE_URLS.testnet` with `baseUrl` pinned:
+  `handshake()` **completed** — server-minted `sessionId` returned (`GET /status → 200`,
+  `POST /api/rpc → 200`). Stronger: handshake also completes with `handlers: {}` **and with no
+  `handlers` key at all**, so the handshake requires **zero** guest-to-host handlers. The SDK
+  fetches the ML-KEM key itself via the internal `fetchMlKemPublicKey` → `GET /status` and supplies
+  `Random` internally; `EthSign` is only consumed later at `authenticate()`. **The README Quick
+  Start is NOT broken; the original high-severity claim is withdrawn and #9 is removed from the
+  headline bug list.** Repro harness (committed): `packages/agent/scripts/repro-handshake.mjs`
+  (scenarios A/B/D).
+- **Residual (the reclassified finding):** the only real issue left is a doc over-claim —
+  `createDefaultHandlers`' TSDoc says its set is "**required by the T3n handshake**" (`index.d.ts
+  L2155-2160`), but live behavior shows it is **not** required to handshake. That misstatement is
+  what seeded this (now-refuted) hypothesis. **Suggested fix:** reword to "convenience set for the
+  full auth flow," and state explicitly that `handshake()` needs no handlers.
 
 ### #10 — README Ethereum-auth example omits `baseUrl` → broken transport & un-buildable MlKem handler
 - **Category:** bug · **Severity:** high
@@ -187,13 +195,16 @@ concrete suggested fix.
   broken — and inconsistent with the Quick Start, which *does* pass `baseUrl`.
 - **Suggested fix:** Always pass `baseUrl` (or a `transport`) in examples; make `baseUrl`
   required at the type level when no `transport` is supplied.
-- **Live-check (2026-06-18):** ⚠️ **Partially observed — reclassify emphasis.** With no `baseUrl`,
-  the client did NOT use testnet — it silently targeted the **production** node: the failure was
-  `GET https://cn-api.sg.prod.t3n.terminal3.io/status: 403`. So omitting `baseUrl` doesn't merely
-  break the transport — **it defaults to PRODUCTION** (the SDK's default environment), a far more
-  dangerous footgun (a dev experimenting locally hits prod). The final break-mode (transport vs
-  ML-KEM handler) is still pending egress, but the prod-default behavior is confirmed live and is
-  the real headline here. Strengthens #20.
+- **Live-check (2026-06-18, egress now open): ✅ CONFIRMED (mechanism corrected).** Running the
+  README "Ethereum Authentication" block verbatim (no `baseUrl`, `EthSign` only), the client
+  silently targeted the **production** node and failed at
+  `GET https://cn-api.sg.prod.t3n.terminal3.io/status → 503 Service Unavailable` (thrown from
+  `fetchStatus` ← `fetchMlKemPublicKey`). Runtime proof of the default, independent of prod's
+  health: on a fresh process `getEnvironment() === "production"` and `getNodeUrl()` (no args)
+  `=== "https://cn-api.sg.prod.t3n.terminal3.io"`. So the original "broken `HttpTransport(undefined)`"
+  mechanism is **wrong** — the transport resolves fine, just to **mainnet**. The real, confirmed
+  footgun: **the documented example silently runs against PRODUCTION.** Repro:
+  `packages/agent/scripts/repro-handshake.mjs` (scenario C). Reinforces #20.
 
 ### #11 — Logger TSDoc example imports a non-existent `@t3n-sdk/logger` subpath
 - **Category:** doc-gap · **Severity:** medium
@@ -331,6 +342,10 @@ concrete suggested fix.
   `production`** — a `T3nClient` built with neither `baseUrl` nor a prior `setEnvironment("testnet")`
   fetched `cn-api.sg.prod.t3n.terminal3.io/status` (see #10). A safe-by-default SDK should default
   to testnet (or refuse with no explicit selection), not silently to mainnet.
+  **(2026-06-18, egress open — hardened):** confirmed at the API level too, before any client is
+  built: on a fresh process `getEnvironment()` returns `"production"` and `getNodeUrl()` (no args)
+  returns the prod URL. Default-to-mainnet is a property of the module's global state, not merely an
+  observed fetch.
 
 ### #21 — No one-call node attestation verify; `attestationMsg` construction undocumented
 - **Category:** missing-example · **Severity:** medium
