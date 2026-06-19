@@ -102,3 +102,51 @@ export function ceilingDeniedEvent(
     committed: true,
   };
 }
+
+/** The on-chain mirror (`MandatePolicy`) cleared a line before dispatch — second trust root. */
+export function onChainAuthorizedEvent(
+  mandate: SignedMandate,
+  agentActorDid: string,
+  line: PayoutLineDecision,
+  txHash: string,
+): LedgerEvent {
+  return {
+    id: nextId("evt"),
+    tsMs: Date.now(),
+    subject: mandate.terms.orgDid,
+    actor: agentActorDid,
+    vcId: mandate.terms.vcId,
+    action: "payout.onchain-authorize",
+    target: line.context.employeeId,
+    outcome: "success",
+    details: `On-chain mirror (MandatePolicy) authorized ${line.context.displayName}: ${line.context.amountCents}¢ — the second, independent trust root cleared the bound before dispatch.`,
+    txHash,
+    committed: true,
+    amountCents: line.context.amountCents,
+    currency: line.context.currency,
+  };
+}
+
+/** The on-chain mirror REJECTED a line — payout blocked by the contract, not just off-chain. */
+export function onChainDeniedEvent(
+  mandate: SignedMandate,
+  agentActorDid: string,
+  line: PayoutLineDecision,
+  reason: string,
+): LedgerEvent {
+  return {
+    id: nextId("evt"),
+    tsMs: Date.now(),
+    subject: mandate.terms.orgDid,
+    actor: agentActorDid,
+    vcId: mandate.terms.vcId,
+    action: "payout.onchain-deny",
+    target: line.context.employeeId,
+    outcome: "denied",
+    details: `On-chain mirror (MandatePolicy) REJECTED ${line.context.displayName} (${reason}). Payout NOT dispatched — the contract enforced the mandate bound independently of the off-chain layer.`,
+    txHash: null,
+    committed: false,
+    amountCents: line.context.amountCents,
+    currency: line.context.currency,
+  };
+}

@@ -11,8 +11,20 @@ import type { LlmClient } from "./judgment/llm.js";
 import { interpretHrUpdate } from "./judgment/interpret.js";
 import { computeProposal } from "./judgment/compute.js";
 import { toInstruction, newNonce } from "./payout.js";
-import { dispatchEvent, escalationEvent, ceilingDeniedEvent } from "./ledger.js";
+import {
+  dispatchEvent,
+  escalationEvent,
+  ceilingDeniedEvent,
+  onChainAuthorizedEvent,
+  onChainDeniedEvent,
+} from "./ledger.js";
 import { isMandateActive } from "./mandate.js";
+import {
+  mandateIdFromVcId,
+  recipientRefToAddress,
+  nonceToBytes32,
+  type OnChainMirror,
+} from "@mandatepay/shared";
 
 export interface RunCycleArgs {
   cycleId: string;
@@ -26,6 +38,13 @@ export interface RunCycleArgs {
   baselines?: Record<string, Cents>;
   anomalyDeviationPct?: number;
   nowSecs?: number;
+  /**
+   * Optional on-chain mirror. When wired, each ready line is re-checked on
+   * `MandatePolicy.authorizeDisbursement` (a second, independent trust root)
+   * BEFORE the rail dispatches; a contract revert blocks that payout. Absent by
+   * default (offline) — the TEE-signed bounds still hold.
+   */
+  mirror?: OnChainMirror;
 }
 
 export interface CycleResult {
@@ -90,10 +109,30 @@ export async function runPayrollCycle(args: RunCycleArgs): Promise<CycleResult> 
     return { proposal, receipts, ledger, dispatched: false };
   }
 
-  // Dispatch ready lines through the rail.
+  // Dispatch ready lines through the rail. When an on-chain mirror is wired, each
+  // line is re-checked on MandatePolicy (a second, independent trust root) BEFORE
+  // any money moves; a contract revert blocks that dispatch.
+  const mandateId = mandateIdFromVcId(args.mandate.terms.vcId);
   for (const line of proposal.lines) {
     if (line.status !== "ready") continue;
-    const instruction = toInstruction(line.context, args.cycleId, newNonce());
+    const nonce = newNonce();
+
+    if (args.mirror) {
+      const onchain = await args.mirror.authorize({
+        mandateId,
+        recipientAddress: recipientRefToAddress(line.context.recipientRef),
+        amountCents: line.context.amountCents,
+        nonceBytes32: nonceToBytes32(nonce),
+      });
+      if (!onchain.ok) {
+        // On-chain mirror rejected this line — do NOT move money.
+        ledger.push(onChainDeniedEvent(args.mandate, args.agentActorDid, line, onchain.reason));
+        continue;
+      }
+      ledger.push(onChainAuthorizedEvent(args.mandate, args.agentActorDid, line, onchain.txHash));
+    }
+
+    const instruction = toInstruction(line.context, args.cycleId, nonce);
     const receipt = await args.rail.dispatch(instruction);
     receipts.push({ employeeId: line.context.employeeId, receipt });
     ledger.push(dispatchEvent(args.mandate, args.agentActorDid, line, receipt));
