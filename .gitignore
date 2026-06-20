@@ -30,3 +30,7 @@ coverage/
 
 # Next generated
 next-env.d.ts
+
+# local org/ledger persistence (offline file store)
+.data/
+**/.data/

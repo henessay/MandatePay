@@ -75,6 +75,11 @@ body::before {
     @apply font-mono text-[12.5px];
   }
 
+  .input {
+    @apply rounded-lg border border-white/10 bg-black/25 px-2.5 py-2 text-sm text-slate-100 outline-none transition;
+    @apply placeholder:text-slate-600 focus:border-sky-400/50 focus:ring-2 focus:ring-sky-400/15;
+  }
+
   .hairline {
     @apply border-t border-white/8;
   }
