@@ -23,6 +23,23 @@ export class MockStripeRail implements DisbursementRail {
 
   async dispatch(instruction: DisbursementInstruction): Promise<DispatchReceipt> {
     const now = Date.now();
+
+    // Wallet-style recipientRef (0x address): the org/EVM model pays public
+    // wallets, not opaque bank refs. Offline we "dispatch" to a masked address
+    // with a deterministic fake tx so the demo works without a live chain.
+    if (/^0x[0-9a-fA-F]{40}$/.test(instruction.recipientRef)) {
+      return {
+        status: "dispatched",
+        railRef: `mock_evm_${instruction.nonce.slice(0, 10)}`,
+        resolvedAccountMasked: `••••${instruction.recipientRef.slice(-4)}`,
+        placeholderUsed: ACCOUNT_PLACEHOLDER,
+        amountCents: instruction.amountCents,
+        currency: instruction.currency,
+        txHash: `0xmock${instruction.nonce.slice(0, 24)}`,
+        dispatchedAtMs: now,
+      };
+    }
+
     const real = resolveAccount(instruction.recipientRef, this.vault);
 
     if (real === null) {

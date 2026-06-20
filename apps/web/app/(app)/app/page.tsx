@@ -5,7 +5,10 @@ import { shortAddress } from "@/lib/wallet";
 import type { Organisation } from "@/lib/org-types";
 import { CreateOrg } from "@/components/org/CreateOrg";
 import { RosterTable, type NewEmployeeInput } from "@/components/org/RosterTable";
-import { SpinnerIcon, LockIcon, ArrowRightIcon } from "@/components/icons";
+import { RunPayroll } from "@/components/org/RunPayroll";
+import { PayoutResults } from "@/components/org/PayoutResults";
+import type { RunResult } from "@/lib/payroll-types";
+import { SpinnerIcon } from "@/components/icons";
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -19,13 +22,37 @@ export default function AppHome() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [railKind, setRailKind] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+  const [runResult, setRunResult] = useState<RunResult | null>(null);
 
   useEffect(() => {
     api<{ org: Organisation | null }>("/api/org")
       .then((d) => setOrg(d.org))
       .catch((e) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
+    api<{ railKind: string }>("/api/payroll/run")
+      .then((d) => setRailKind(d.railKind))
+      .catch(() => {});
   }, []);
+
+  async function runPayroll(instruction: string) {
+    setRunning(true);
+    setError(null);
+    try {
+      const res = await api<RunResult>("/api/payroll/run", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ instruction }),
+      });
+      setRunResult(res);
+      setRailKind(res.railKind);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRunning(false);
+    }
+  }
 
   const mutate = useCallback(async (p: Promise<{ org: Organisation }>) => {
     setBusy(true);
@@ -86,7 +113,10 @@ export default function AppHome() {
             onSeed={seedOrg}
             busy={busy}
           />
-          <RunPayrollPanel ready={org.employees.length > 0} />
+          {org.employees.some((e) => e.active) ? (
+            <RunPayroll onRun={runPayroll} running={running} railKind={railKind} />
+          ) : null}
+          {runResult ? <PayoutResults result={runResult} /> : null}
         </>
       )}
     </div>
@@ -112,32 +142,3 @@ function OrgHeader({ org }: { org: Organisation }) {
   );
 }
 
-function RunPayrollPanel({ ready }: { ready: boolean }) {
-  return (
-    <section className="card glass-sky above animate-fade-up p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="label text-sky-200/80">Run payroll</h2>
-          <p className="mt-1 max-w-2xl text-[13px] leading-snug text-slate-400">
-            Sign one bounded mandate with your wallet, tell the agent what to pay (e.g. &ldquo;run
-            this month&rsquo;s salaries, +10% bonus to sales&rdquo;), and it dispatches real
-            transfers to each employee&rsquo;s wallet — within the ceiling, on-chain, every move on
-            the ledger.
-          </p>
-        </div>
-        <button
-          disabled
-          title="Wired in the next build phase"
-          className="inline-flex items-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-500"
-        >
-          <LockIcon className="h-4 w-4" />
-          {ready ? "Sign mandate & run" : "Add employees first"}
-          <ArrowRightIcon className="h-4 w-4" />
-        </button>
-      </div>
-      <p className="mt-3 text-[11px] text-slate-600">
-        On-chain disbursement (EVM rail) + wallet mandate signing land in the next phase.
-      </p>
-    </section>
-  );
-}
