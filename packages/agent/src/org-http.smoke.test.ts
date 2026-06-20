@@ -32,7 +32,7 @@ async function login(): Promise<string> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ address, signature, nonce }),
   });
-  return (res.headers.get("set-cookie") ?? "").split(";")[0];
+  return (res.headers.get("set-cookie") ?? "").split(";")[0] ?? "";
 }
 
 type OrgEmp = { employeeId: string; displayName: string; wallet: string };

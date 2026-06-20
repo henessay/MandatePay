@@ -59,7 +59,7 @@ describe("auth HTTP flow", () => {
     expect(loginRes.status).toBe(200);
     const setCookie = loginRes.headers.get("set-cookie") ?? "";
     expect(setCookie).toContain("mp_session=");
-    const cookie = setCookie.split(";")[0];
+    const cookie = setCookie.split(";")[0] ?? "";
 
     const me = (await fetch(`${BASE}/api/auth/me`, { headers: { cookie } }).then((r) =>
       r.json(),
