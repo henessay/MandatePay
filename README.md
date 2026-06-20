@@ -83,7 +83,7 @@ We are explicit about where the demo is real and where it is mocked — see
 | LLM interpretation (claude-sonnet-4-6) | ✅ | **Real** Anthropic API (advisory only); EN **and** Russian free-form both parse correctly |
 | Deterministic bounds (ceiling / window / per-line / anomaly halt) | ✅ | **Real**, fully tested |
 | Agent-Auth on the live T3 node (handshake → SIWE → DID → grants) | ✅ | **Real** — `agent-auth-update` grants **committed on-chain** (`tx:302:44993`, `tx:302:44995`) |
-| On-chain mirror `MandatePolicy.sol` | ✅ | **Real & deployed** — Sepolia [`0x6a68Cc67…32a5A1`](https://sepolia.etherscan.io/address/0x6a68Cc677c6bd10a39d3733Ea519ca093C32a5A1) (tx `0xd479…d836`); on-chain check wiring in progress |
+| On-chain mirror `MandatePolicy.sol` | ✅ | **Real · deployed · verified on-chain** — Sepolia [`0x6a68Cc67…32a5A1`](https://sepolia.etherscan.io/address/0x6a68Cc677c6bd10a39d3733Ea519ca093C32a5A1); payout path calls `authorizeDisbursement` pre-dispatch — valid line committed, over-cap/non-allowlist/over-ceiling **reverted by the contract** (`scripts/verify-mirror.sh`) |
 | **Disbursement dispatch** | `MockStripeRail` | **Mocked, by design.** The built-in `tee:payroll` contract is un-provisionable on the sandbox (no way to create the required organisation — verified from 6 angles, `FEEDBACK_T3.md` #30/#32). `T3PayrollRail` encodes everything we confirmed live and *throws rather than guess* the unconfirmed response. |
 
 This is a **final architectural position, not a stub:** disbursement is isolated behind one
@@ -182,11 +182,15 @@ With no key, the agent runs on a deterministic mock interpreter so the whole dem
   anomaly halt, live T3 Agent-Auth (handshake/SIWE/DID + on-chain grants), `MandatePolicy` + tests.
 - **Mocked by design:** disbursement dispatch (`MockStripeRail`) — see
   [`docs/R1_RESOLUTION.md`](docs/R1_RESOLUTION.md).
-- **Deployed:** `MandatePolicy.sol` is live on **Sepolia** at
+- **Deployed & on-chain-verified:** `MandatePolicy.sol` is live on **Sepolia** at
   [`0x6a68Cc677c6bd10a39d3733Ea519ca093C32a5A1`](https://sepolia.etherscan.io/address/0x6a68Cc677c6bd10a39d3733Ea519ca093C32a5A1)
-  (deploy tx `0xd4791ee675ce7ece07aca3874f178663a453459ff741fa17c7acc735fb33d836`, owner
-  `0xD69D9bBfFaeb2f4CD1c1C44cf6142712CacE7705`). Wiring the on-chain `authorizeDisbursement` check
-  into the payout path is in progress.
+  (deploy tx `0xd4791ee6…fb33d836`, owner `0xD69D9bBf…E7705`). The payout path re-checks every line on
+  `authorizeDisbursement` **before** dispatch — **proven live** (`packages/contracts/scripts/verify-mirror.sh`):
+  a valid \$8,000 line committed on-chain (createMandate
+  [`0x1c37fcdd…058af`](https://sepolia.etherscan.io/tx/0x1c37fcddba580b04e1bc78432c8f77a23e502e83e4fa5a9aa3035b6fc0e058af),
+  authorize [`0xd1143e27…8eaae`](https://sepolia.etherscan.io/tx/0xd1143e274b0f567b34615fc7b8a5367db77bd088c0604686a544417d8788eaae)),
+  while over-cap (`LineCapExceeded`), non-allowlisted (`NotAllowlisted`) and over-ceiling
+  (`CeilingExceeded`) lines were **reverted by the contract** — not just off-chain.
 
 ```
 MANDATE_POLICY_ADDRESS=0x6a68Cc677c6bd10a39d3733Ea519ca093C32a5A1   # Sepolia (chainId 11155111)

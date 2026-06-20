@@ -69,16 +69,19 @@ judge-facing point (don't say it, just make sure the shot lands it).
 - 🏆 **Completeness:** the audit trail closes the loop; attestation = "trust you can verify."
 
 ### Beat 6 — "None of this is theatre" (2:40–3:00) ⭐ proof shot
-- 🖱️ Cut to the pre-warmed terminal: the live run against `cn-api.sg.testnet.t3n.terminal3.io` —
-  handshake → SIWE → DID `did:t3n:cb2c…542e` → **`agent-auth-update` committed: `tx:302:44993`,
-  `tx:302:44995`**.
-- 🎙️ *"And to be clear about what's real: the Agent-Auth layer runs against Terminal 3's live testnet —
-  these are real on-chain authorization grants. We took their flagship payroll contract all the way to
-  its authorization layer; the one piece we mock — the bank dispatch — we mock *honestly*, because the
-  built-in contract isn't provisionable on the sandbox yet, and we filed six reproducible bugs about it
-  instead of faking a payout."*
-- 🏆 **Honesty + Agent-Auth depth #2:** real tx hashes on screen. Ends on credibility, not a fake green
-  checkmark. (See `docs/R1_RESOLUTION.md`, `docs/BUG_REPORT_HEADLINE.md`.)
+- 🖱️ Two pre-warmed terminals — two independent on-chain trust roots:
+  **(a) T3 Agent-Auth** against `cn-api.sg.testnet.t3n.terminal3.io` — handshake → SIWE →
+  DID `did:t3n:cb2c…542e` → **`agent-auth-update` committed: `tx:302:44993` / `44995`**.
+  **(b) On-chain mirror** on Sepolia (`scripts/verify-mirror.sh`) — a valid \$8,000 line **committed**
+  (`0xd1143e27…8eaae`), then the contract **reverting** an over-cap (`LineCapExceeded`), a wrong/
+  non-allowlisted account (`NotAllowlisted`) and an over-ceiling run (`CeilingExceeded`).
+- 🎙️ *"And to be clear about what's real: two independent on-chain layers. The Agent-Auth grants run
+  against Terminal 3's live testnet. And the mandate's bounds are mirrored on a public chain — watch the
+  contract itself reject an over-cap payout, a wrong account, and an over-budget run. The one piece we
+  mock — the bank dispatch — we mock *honestly*: the built-in payroll contract isn't provisionable on the
+  sandbox yet, so we filed six reproducible bugs instead of faking a payout."*
+- 🏆 **Honesty + defense-in-depth:** real tx hashes from TWO trust roots on screen. Ends on credibility,
+  not a fake green checkmark. (See `docs/R1_RESOLUTION.md`, `docs/BUG_REPORT_HEADLINE.md`.)
 
 ---
 
