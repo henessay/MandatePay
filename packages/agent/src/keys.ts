@@ -1,6 +1,6 @@
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import { bytesToHex, hexToBytes } from "@noble/hashes/utils.js";
-import { eth_get_address } from "@terminal3/t3n-sdk";
+import { eth_get_address, ethRecoverEip191 } from "@terminal3/t3n-sdk";
 
 /**
  * Key helpers for MandatePay. Two roles:
@@ -42,4 +42,16 @@ export function toHex(bytes: Uint8Array): string {
 /** Ethereum address (0x, lowercase) for an EOA secret — delegates to the SDK. */
 export function ethAddressFromSecret(secret: Uint8Array): string {
   return eth_get_address("0x" + bytesToHex(secret));
+}
+
+/**
+ * Recover the EIP-191 (personal_sign) signer of a message, as a lowercase 0x
+ * address. Accepts the message as raw bytes (e.g. the credential JCS) or a UTF-8
+ * string (e.g. a SIWE login message). Same primitive the mandate-verify path uses,
+ * so a browser-wallet personal_sign and our server verification agree byte-for-byte.
+ */
+export function recoverEip191Address(message: Uint8Array | string, signatureHex: string): string {
+  const msg = typeof message === "string" ? new TextEncoder().encode(message) : message;
+  const sig = hexToBytes(signatureHex.startsWith("0x") ? signatureHex.slice(2) : signatureHex);
+  return ("0x" + bytesToHex(ethRecoverEip191(msg, sig))).toLowerCase();
 }
